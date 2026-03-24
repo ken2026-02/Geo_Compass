@@ -65,6 +65,22 @@ function statusTone(status: SensorState) {
   return 'bg-slate-500';
 }
 
+function clampBubbleOffset(beta: number, gamma: number) {
+  const scale = 1.4;
+  const maxRadius = 48;
+  let x = gamma * scale;
+  let y = beta * scale;
+  const radius = Math.sqrt(x * x + y * y);
+
+  if (radius > maxRadius && radius > 0) {
+    const clampRatio = maxRadius / radius;
+    x *= clampRatio;
+    y *= clampRatio;
+  }
+
+  return { x, y };
+}
+
 const Stereonet = ({ dip, dipDir }: { dip: number; dipDir: number }) => {
   const radius = (Math.max(0, Math.min(dip, 90)) / 90) * 38;
   const angle = ((dipDir - 90) * Math.PI) / 180;
@@ -141,6 +157,11 @@ export default function App() {
     const gamma = orientation.gamma || 0;
     return Math.sqrt(beta * beta + gamma * gamma);
   }, [orientation.beta, orientation.gamma]);
+
+  const bubbleOffset = useMemo(
+    () => clampBubbleOffset(orientation.beta || 0, orientation.gamma || 0),
+    [orientation.beta, orientation.gamma],
+  );
 
   const holdQuality = tiltMagnitude < 2 ? 'Excellent' : tiltMagnitude < 6 ? 'Good' : 'Moving';
 
@@ -596,7 +617,7 @@ export default function App() {
                           ? 'bg-emerald-500 shadow-[0_0_24px_rgba(16,185,129,0.55)]'
                           : 'bg-[#ff8a3d] shadow-[0_0_24px_rgba(255,138,61,0.45)]'
                       }`}
-                      animate={{ x: (orientation.gamma || 0) * 1.4, y: (orientation.beta || 0) * 1.4 }}
+                      animate={{ x: bubbleOffset.x, y: bubbleOffset.y }}
                       transition={{ type: 'spring', stiffness: 150, damping: 20 }}
                     />
                     <div className="absolute bottom-3 flex gap-2 text-[8px] font-mono text-white/45">
