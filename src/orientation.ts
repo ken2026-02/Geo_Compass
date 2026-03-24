@@ -250,6 +250,6 @@ export function scoreMeasurementConfidence(params: {
     score: normalized,
     label,
     reasons,
-    canRecord: normalized >= 0.78 && !sensorError && sensorFreshMs <= 1500 && !isCalibrating,
+    canRecord: normalized >= 0.64 && !sensorError && sensorFreshMs <= 2500,
   } satisfies MeasurementConfidence;
 }

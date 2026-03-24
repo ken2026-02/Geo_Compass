@@ -39,6 +39,10 @@ function formatDegree(value: number) {
   return `${Math.round(value)}°`;
 }
 
+function formatDecimalDegree(value: number) {
+  return `${value.toFixed(1)}°`;
+}
+
 function formatQuadrant(azimuth: number) {
   const deg = ((azimuth % 360) + 360) % 360;
   if (deg <= 90) return `N${Math.round(deg)}°E`;
@@ -134,6 +138,7 @@ export default function App() {
   const [showBottomMeta, setShowBottomMeta] = useState(false);
   const [storageWarning, setStorageWarning] = useState<string | null>(null);
   const [restoreNotice, setRestoreNotice] = useState<string | null>(null);
+  const [recordFeedback, setRecordFeedback] = useState<{ type: 'success' | 'warning'; message: string } | null>(null);
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [confidence, setConfidence] = useState<MeasurementConfidence>({
@@ -150,6 +155,7 @@ export default function App() {
   const lastSignalAt = useRef(0);
   const calibrationTimeoutRef = useRef<number | null>(null);
   const deleteTimeoutRef = useRef<number | null>(null);
+  const recordFeedbackTimeoutRef = useRef<number | null>(null);
   const recentSamplesRef = useRef<ConfidenceWindowSample[]>([]);
 
   const tiltMagnitude = useMemo(() => {
@@ -163,7 +169,7 @@ export default function App() {
     [orientation.beta, orientation.gamma],
   );
 
-  const holdQuality = tiltMagnitude < 2 ? 'Excellent' : tiltMagnitude < 6 ? 'Good' : 'Moving';
+  const holdQuality = tiltMagnitude < 1.4 ? 'Stable' : tiltMagnitude < 4 ? 'Settling' : 'Moving';
 
   const handleOrientation = useCallback(
     (event: DeviceOrientationEvent & { webkitCompassHeading?: number | null }) => {
@@ -335,7 +341,14 @@ export default function App() {
     return () => {
       if (calibrationTimeoutRef.current !== null) window.clearTimeout(calibrationTimeoutRef.current);
       if (deleteTimeoutRef.current !== null) window.clearTimeout(deleteTimeoutRef.current);
+      if (recordFeedbackTimeoutRef.current !== null) window.clearTimeout(recordFeedbackTimeoutRef.current);
     };
+  }, []);
+
+  const pushRecordFeedback = useCallback((type: 'success' | 'warning', message: string) => {
+    setRecordFeedback({ type, message });
+    if (recordFeedbackTimeoutRef.current !== null) window.clearTimeout(recordFeedbackTimeoutRef.current);
+    recordFeedbackTimeoutRef.current = window.setTimeout(() => setRecordFeedback(null), 2200);
   }, []);
 
   const requestPermission = async () => {
@@ -387,7 +400,10 @@ export default function App() {
   };
 
   const saveMeasurement = () => {
-    if (!confidence.canRecord) return;
+    if (!confidence.canRecord) {
+      pushRecordFeedback('warning', confidence.reasons.slice(0, 2).join(' · ') || 'Hold steady before recording.');
+      return;
+    }
 
     const entry: Measurement = {
       id:
@@ -412,6 +428,8 @@ export default function App() {
     setMeasurements((prev) => [entry, ...prev]);
     setLastSavedAt(entry.timestamp);
     setPendingDeleteId(null);
+    setShowHistory(true);
+    pushRecordFeedback('success', `Saved ${formatDegree(entry.dipDirection)} / ${formatDegree(entry.dip)}`);
   };
 
   const deleteMeasurement = (id: string) => {
@@ -523,6 +541,19 @@ export default function App() {
         </header>
 
         <main className="mt-3 space-y-3">
+          {recordFeedback ? (
+            <div
+              className={`flex items-center gap-2 rounded-[24px] px-4 py-3 text-xs ${
+                recordFeedback.type === 'success'
+                  ? 'border border-emerald-500/25 bg-emerald-500/10 text-emerald-900'
+                  : 'border border-amber-500/25 bg-amber-500/10 text-amber-900'
+              }`}
+            >
+              {recordFeedback.type === 'success' ? <ShieldCheck size={15} className="shrink-0" /> : <AlertTriangle size={15} className="shrink-0" />}
+              <span>{recordFeedback.message}</span>
+            </div>
+          ) : null}
+
           {restoreNotice ? (
             <div className="flex items-center gap-2 rounded-[24px] border border-emerald-500/25 bg-emerald-500/10 px-4 py-3 text-xs text-emerald-900">
               <ShieldCheck size={15} className="shrink-0" />
@@ -663,122 +694,6 @@ export default function App() {
           </section>
 
           <section className="rounded-[30px] border border-black/8 bg-[rgba(255,255,255,0.58)] p-4 shadow-[0_16px_40px_rgba(74,58,32,0.08)] backdrop-blur-xl">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <div className="text-[10px] font-mono uppercase tracking-[0.24em] text-black/45">Capture</div>
-                <div className="mt-1 text-sm font-semibold text-black/85">Ready to store the current reading</div>
-              </div>
-              <button
-                onClick={() => setShowSettings((prev) => !prev)}
-                className="rounded-2xl border border-black/8 bg-white/70 p-3 text-black/70 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)]"
-              >
-                <Settings2 size={18} />
-              </button>
-            </div>
-
-            <AnimatePresence initial={false}>
-              {showSettings ? (
-                <motion.div
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: 'auto', opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  className="overflow-hidden"
-                >
-                  <div className="mt-4 space-y-3 border-t border-black/8 pt-4">
-                    <div className="grid grid-cols-2 gap-2">
-                      <div className="rounded-2xl border border-black/8 bg-white/70 px-3 py-3">
-                        <div className="text-[10px] font-mono uppercase tracking-[0.18em] text-black/45">Declination</div>
-                        <input
-                          type="number"
-                          inputMode="decimal"
-                          value={declination}
-                          onChange={(event) => {
-                            setDeclination(Number(event.target.value));
-                            setDeclinationSource('manual');
-                            setDeclinationConfidence('high');
-                          }}
-                          className="mt-1 w-full bg-transparent text-sm font-semibold text-black/80 outline-none"
-                        />
-                      </div>
-                      <div className="rounded-2xl border border-black/8 bg-white/70 px-3 py-3">
-                        <div className="text-[10px] font-mono uppercase tracking-[0.18em] text-black/45">Manual Offset</div>
-                        <input
-                          type="number"
-                          inputMode="decimal"
-                          value={manualOffset}
-                          onChange={(event) => setManualOffset(Number(event.target.value))}
-                          className="mt-1 w-full bg-transparent text-sm font-semibold text-black/80 outline-none"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="rounded-2xl border border-black/8 bg-white/70 px-3 py-3">
-                      <div className="text-[10px] font-mono uppercase tracking-[0.18em] text-black/45">Compass Setup</div>
-                      <div className="mt-2 grid grid-cols-[1fr_auto] gap-2">
-                        <select
-                          value={currentProject}
-                          onChange={(event) => setCurrentProject(event.target.value)}
-                          className="w-full bg-transparent text-sm font-semibold text-black/80 outline-none"
-                        >
-                          {projects.map((project) => (
-                            <option key={project} value={project}>
-                              {project}
-                            </option>
-                          ))}
-                        </select>
-                        <button
-                          onClick={() => setUseTrueNorth((prev) => !prev)}
-                          className="rounded-xl border border-black/8 bg-white px-3 py-2 text-xs font-bold uppercase tracking-[0.14em] text-black/75"
-                        >
-                          {useTrueNorth ? 'True' : 'Mag'}
-                        </button>
-                      </div>
-                      <div className="mt-2 text-xs text-black/55">
-                        Declination {declination.toFixed(1)}° · {declinationSource} · {declinationConfidence} confidence
-                      </div>
-                    </div>
-
-                    <div className="rounded-2xl border border-black/8 bg-white/70 px-3 py-3">
-                      <div className="text-[10px] font-mono uppercase tracking-[0.18em] text-black/45">Add Project</div>
-                      <div className="mt-2 flex gap-2">
-                        <input
-                          type="text"
-                          value={newProjectName}
-                          onChange={(event) => setNewProjectName(event.target.value)}
-                          placeholder="New project name"
-                          className="min-w-0 flex-1 rounded-xl border border-black/8 bg-white px-3 py-2 text-sm outline-none"
-                        />
-                        <button
-                          onClick={addProject}
-                          className="flex items-center gap-1 rounded-xl bg-[#17181b] px-4 py-2 text-xs font-bold uppercase tracking-[0.18em] text-white"
-                        >
-                          <Plus size={14} />
-                          Add
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center justify-between rounded-2xl border border-black/8 bg-white/70 px-3 py-3">
-                      <div>
-                        <div className="text-[10px] font-mono uppercase tracking-[0.18em] text-black/45">Export</div>
-                        <div className="mt-1 text-xs text-black/60">Download all local measurements to CSV.</div>
-                      </div>
-                      <button
-                        onClick={exportData}
-                        disabled={measurements.length === 0}
-                        className="flex items-center gap-2 rounded-xl bg-[#17181b] px-4 py-2 text-xs font-bold uppercase tracking-[0.18em] text-white disabled:opacity-40"
-                      >
-                        <Download size={14} />
-                        CSV
-                      </button>
-                    </div>
-                  </div>
-                </motion.div>
-              ) : null}
-            </AnimatePresence>
-          </section>
-
-          <section className="rounded-[30px] border border-black/8 bg-[rgba(255,255,255,0.58)] p-4 shadow-[0_16px_40px_rgba(74,58,32,0.08)] backdrop-blur-xl">
             <button className="flex w-full items-center justify-between" onClick={() => setShowHistory((prev) => !prev)}>
               <div className="text-left">
                 <div className="text-[10px] font-mono uppercase tracking-[0.24em] text-black/45">Recent Measurements</div>
@@ -851,13 +766,25 @@ export default function App() {
       <div className="fixed inset-x-0 bottom-0 z-40 mx-auto w-full max-w-lg px-3 pb-[calc(env(safe-area-inset-bottom)+12px)]">
         <div className="space-y-2 rounded-[28px] border border-black/8 bg-[rgba(23,24,27,0.88)] p-3 shadow-[0_18px_50px_rgba(0,0,0,0.35)] backdrop-blur-xl">
           <div className="flex items-center justify-between px-1">
-            <button
-              onClick={() => setShowBottomMeta((prev) => !prev)}
-              className="flex items-center gap-2 rounded-full border border-white/10 bg-white/6 px-3 py-2 text-[10px] font-mono uppercase tracking-[0.2em] text-white/70"
-            >
-              <Layers size={12} />
-              {showBottomMeta ? 'Hide Info' : 'Show Info'}
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowBottomMeta((prev) => !prev)}
+                className="flex items-center gap-2 rounded-full border border-white/10 bg-white/6 px-3 py-2 text-[10px] font-mono uppercase tracking-[0.2em] text-white/70"
+              >
+                <Layers size={12} />
+                {showBottomMeta ? 'Hide Info' : 'Show Info'}
+              </button>
+              <button
+                onClick={() => {
+                  setShowBottomMeta(true);
+                  setShowSettings((prev) => !prev);
+                }}
+                className="flex items-center gap-2 rounded-full border border-white/10 bg-white/6 px-3 py-2 text-[10px] font-mono uppercase tracking-[0.2em] text-white/70"
+              >
+                <Settings2 size={12} />
+                {showSettings ? 'Hide Setup' : 'Setup'}
+              </button>
+            </div>
           </div>
 
           <AnimatePresence initial={false}>
@@ -893,6 +820,109 @@ export default function App() {
                     ) : null}
                   </div>
                 </div>
+
+                <AnimatePresence initial={false}>
+                  {showSettings ? (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      className="overflow-hidden"
+                    >
+                      <div className="mt-2 space-y-2 rounded-[24px] border border-white/8 bg-white/6 p-2.5">
+                        <div className="grid grid-cols-2 gap-2">
+                        <div className="rounded-2xl border border-black/8 bg-white/80 px-3 py-3">
+                          <div className="text-[10px] font-mono uppercase tracking-[0.18em] text-black/45">True North Correction</div>
+                          <input
+                            type="number"
+                            inputMode="decimal"
+                            step="0.1"
+                            value={Number.isFinite(declination) ? declination.toFixed(1) : '0.0'}
+                            onChange={(event) => {
+                              setDeclination(Number(event.target.value));
+                              setDeclinationSource('manual');
+                              setDeclinationConfidence('high');
+                            }}
+                              className="mt-1 w-full bg-transparent text-sm font-semibold text-black/80 outline-none"
+                            />
+                          </div>
+                        <div className="rounded-2xl border border-black/8 bg-white/80 px-3 py-3">
+                          <div className="text-[10px] font-mono uppercase tracking-[0.18em] text-black/45">Device Offset</div>
+                          <input
+                            type="number"
+                            inputMode="decimal"
+                            step="0.1"
+                            value={Number.isFinite(manualOffset) ? manualOffset.toFixed(1) : '0.0'}
+                            onChange={(event) => setManualOffset(Number(event.target.value))}
+                            className="mt-1 w-full bg-transparent text-sm font-semibold text-black/80 outline-none"
+                          />
+                          </div>
+                        </div>
+
+                        <div className="rounded-2xl border border-black/8 bg-white/80 px-3 py-3">
+                          <div className="text-[10px] font-mono uppercase tracking-[0.18em] text-black/45">Compass Setup</div>
+                          <div className="mt-2 grid grid-cols-[1fr_auto] gap-2">
+                            <select
+                              value={currentProject}
+                              onChange={(event) => setCurrentProject(event.target.value)}
+                              className="w-full bg-transparent text-sm font-semibold text-black/80 outline-none"
+                            >
+                              {projects.map((project) => (
+                                <option key={project} value={project}>
+                                  {project}
+                                </option>
+                              ))}
+                            </select>
+                            <button
+                              onClick={() => setUseTrueNorth((prev) => !prev)}
+                              className="rounded-xl border border-black/8 bg-white px-3 py-2 text-xs font-bold uppercase tracking-[0.14em] text-black/75"
+                            >
+                              {useTrueNorth ? 'True' : 'Mag'}
+                            </button>
+                          </div>
+                          <div className="mt-2 text-xs text-black/55">
+                            Correction {formatDecimalDegree(declination)} · {declinationSource} · {declinationConfidence} confidence
+                          </div>
+                        </div>
+
+                        <div className="rounded-2xl border border-black/8 bg-white/80 px-3 py-3">
+                          <div className="text-[10px] font-mono uppercase tracking-[0.18em] text-black/45">Add Project</div>
+                          <div className="mt-2 flex gap-2">
+                            <input
+                              type="text"
+                              value={newProjectName}
+                              onChange={(event) => setNewProjectName(event.target.value)}
+                              placeholder="New project name"
+                              className="min-w-0 flex-1 rounded-xl border border-black/8 bg-white px-3 py-2 text-sm outline-none"
+                            />
+                            <button
+                              onClick={addProject}
+                              className="flex items-center gap-1 rounded-xl bg-[#17181b] px-4 py-2 text-xs font-bold uppercase tracking-[0.18em] text-white"
+                            >
+                              <Plus size={14} />
+                              Add
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between rounded-2xl border border-black/8 bg-white/80 px-3 py-3">
+                          <div>
+                            <div className="text-[10px] font-mono uppercase tracking-[0.18em] text-black/45">Export</div>
+                            <div className="mt-1 text-xs text-black/60">Download all local measurements to CSV.</div>
+                          </div>
+                          <button
+                            onClick={exportData}
+                            disabled={measurements.length === 0}
+                            className="flex items-center gap-2 rounded-xl bg-[#17181b] px-4 py-2 text-xs font-bold uppercase tracking-[0.18em] text-white disabled:opacity-40"
+                          >
+                            <Download size={14} />
+                            CSV
+                          </button>
+                        </div>
+                      </div>
+                    </motion.div>
+                  ) : null}
+                </AnimatePresence>
               </motion.div>
             ) : null}
           </AnimatePresence>
@@ -909,11 +939,10 @@ export default function App() {
 
             <button
               onClick={saveMeasurement}
-              disabled={!confidence.canRecord}
-              className="flex min-h-14 items-center justify-center gap-2 rounded-2xl bg-[linear-gradient(135deg,#ff8a3d_0%,#f26b2c_100%)] px-5 py-3 text-sm font-bold uppercase tracking-[0.18em] text-white shadow-[0_14px_30px_rgba(242,107,44,0.35)] disabled:cursor-not-allowed disabled:opacity-45"
+              className="flex min-h-14 items-center justify-center gap-2 rounded-2xl bg-[linear-gradient(135deg,#ff8a3d_0%,#f26b2c_100%)] px-5 py-3 text-sm font-bold uppercase tracking-[0.18em] text-white shadow-[0_14px_30px_rgba(242,107,44,0.35)]"
             >
               <Save size={16} />
-              {confidence.canRecord ? 'Record Measurement' : 'Hold For Stable Fix'}
+              Record
             </button>
 
             <button
