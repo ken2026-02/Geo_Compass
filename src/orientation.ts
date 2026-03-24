@@ -132,9 +132,9 @@ export function computeOrientation(
   // Browser device coordinates use +Z out of the screen. For field capture we
   // treat the phone back as the plane normal, so rotate device -Z into ENU space.
   let normal = rotateVector(quaternion, [0, 0, -1]);
-  // When measuring, the user keeps the phone bottom pointing downslope. Use the
-  // rotated bottom edge to resolve the dip-direction sign consistently.
-  const deviceBottom = rotateVector(quaternion, [0, -1, 0]);
+  // When measuring, the user keeps the phone bottom pointing downslope. In the
+  // browser device frame, +Y corresponds to the handset bottom edge.
+  const deviceBottom = rotateVector(quaternion, [0, 1, 0]);
   if (normal[2] < 0) {
     normal = [-normal[0], -normal[1], -normal[2]];
   }
