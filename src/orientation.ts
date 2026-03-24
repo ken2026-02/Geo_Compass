@@ -78,6 +78,12 @@ function rotateVector(
   return [rotated[1], rotated[2], rotated[3]];
 }
 
+function horizontalAzimuth(vector: [number, number, number]) {
+  const horizontal = Math.sqrt(vector[0] * vector[0] + vector[1] * vector[1]);
+  if (horizontal < 1e-6) return null;
+  return normalizeDegrees(toDegrees(Math.atan2(vector[0], vector[1])));
+}
+
 export function eulerToQuaternion(alpha: number, beta: number, gamma: number): [number, number, number, number] {
   const halfZ = toRadians(alpha) / 2;
   const halfX = toRadians(beta) / 2;
@@ -126,22 +132,36 @@ export function computeOrientation(
   // Browser device coordinates use +Z out of the screen. For field capture we
   // treat the phone back as the plane normal, so rotate device -Z into ENU space.
   let normal = rotateVector(quaternion, [0, 0, -1]);
+  // When measuring, the user keeps the phone bottom pointing downslope. Use the
+  // rotated bottom edge to resolve the dip-direction sign consistently.
+  const deviceBottom = rotateVector(quaternion, [0, -1, 0]);
   if (normal[2] < 0) {
     normal = [-normal[0], -normal[1], -normal[2]];
   }
 
   const horizontal = Math.sqrt(normal[0] * normal[0] + normal[1] * normal[1]);
   const dip = toDegrees(Math.atan2(horizontal, Math.max(normal[2], 1e-6)));
-  const dipDirection = horizontal > 1e-6 ? normalizeDegrees(toDegrees(Math.atan2(normal[0], normal[1]))) : 0;
+  const rawDipDirection = horizontal > 1e-6 ? normalizeDegrees(toDegrees(Math.atan2(normal[0], normal[1]))) : 0;
 
+  const eulerHeadingMagnetic = computeCompassHeading(alpha, beta, gamma);
   const headingMagnetic =
     input.webkitCompassHeading !== undefined && input.webkitCompassHeading !== null
       ? normalizeDegrees(input.webkitCompassHeading)
-      : computeCompassHeading(alpha, beta, gamma);
+      : eulerHeadingMagnetic;
 
   const headingCorrected = useTrueNorth
     ? normalizeDegrees(headingMagnetic + declination + manualOffset)
     : normalizeDegrees(headingMagnetic + manualOffset);
+
+  const referenceRotation = normalizeDegrees(headingCorrected - eulerHeadingMagnetic);
+  let dipDirection = dip > 0.5 ? normalizeDegrees(rawDipDirection + referenceRotation) : headingCorrected;
+  const bottomAzimuth = horizontalAzimuth(deviceBottom);
+  if (dip > 0.5 && bottomAzimuth !== null) {
+    const correctedBottomAzimuth = normalizeDegrees(bottomAzimuth + referenceRotation);
+    if (Math.abs(angleDelta(dipDirection, correctedBottomAzimuth)) > 90) {
+      dipDirection = normalizeDegrees(dipDirection + 180);
+    }
+  }
 
   return {
     headingMagnetic,
