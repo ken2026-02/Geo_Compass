@@ -1,0 +1,7 @@
+{
+  "name": "GeoCompass Pro",
+  "description": "专业地质罗盘，用于现场测量岩层走向、倾向及倾角。支持完全离线使用和本地数据存储。",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
